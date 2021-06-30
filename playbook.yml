@@ -1,17 +1,18 @@
 ---
-- name: Create EC2
-   hosts: localhost
-   tasks:
-- name: launching AWS instance using Ansible
-ec2:
-key_name: aws_instance_Ansible
-instance_type: t2.micro
-image: ami-0dacb0c129b49f529
-region: us-east-2
-wait: yes
-group: Ansible
-count: 1
-vpc_subnet_id: default
-assign_public_ip: yes
-aws_access_key: ***********xxxxxxxx
-Aws_secret_key: ***********xxxxxxxx
+- name: Create builder EC2
+  hosts: localhost
+  tasks:
+  include_vars: secret.yml
+  - name: launch AWS EC2
+    ec2:
+      key_name: ansible
+      instance_type: t2.micro
+      image: ami-05f7491af5eef733a
+      region: eu-central-1
+      wait: yes
+      group: launch-wizard-1
+      count: 1
+      vpc_subnet_id: subnet-999223e5
+      assign_public_ip: yes
+      aws_access_key: "{{ access_key }}"
+      aws_secret_key: "{{ secret_key }}"
