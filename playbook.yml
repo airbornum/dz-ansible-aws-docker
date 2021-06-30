@@ -2,8 +2,10 @@
 - name: Create builder EC2
   hosts: localhost
   tasks:
-  - name: launch AWS EC2
+  - name: Include secret
     include_vars: secret.yml
+
+  - name: launch instance
     ec2:
       key_name: ansible
       instance_type: t2.micro
