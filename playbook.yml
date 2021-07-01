@@ -73,7 +73,7 @@
      insertafter="[builder]" line="build_host {{ item.public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=/home/admin/.ssh/admin ansible_ssh_extra_args='-o StrictHostKeyChecking=no'"
     with_items: "{{ build_host.instances }}"
 
- - name: Add the newly created EC2 instance to the local builder group
+ - name: Add the newly created EC2 instance to the local prod group
    become: true
    local_action: lineinfile
     path="/etc/ansible/hosts"
@@ -127,7 +127,7 @@
       run_once: yes
       fetch: src=/home/ubuntu/java-app/target/hello-1.0.war dest=buffer/ flat=yes
 
-- hosts: prod
+- hosts: prod_host
   become: true
 
   tasks:
