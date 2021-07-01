@@ -5,16 +5,152 @@
   - name: Include secret
     include_vars: secret.yml
 
-  - name: launch instance
+  - name: Upload public key to AWS
+    ec2_key:
+      name: admin
+      key_material: "{{ lookup('file', '/home/admin/.ssh/admin.pub') }}"
+      region: eu-central-1
+      aws_access_key: "{{ access_key }}"
+      aws_secret_key: "{{ secret_key }}"
+
+  - name: Create security group
+    ec2_group:
+      name: java-app-sg
+      description: Sec group for java-app
+      region: eu-central-1
+      aws_access_key: "{{ access_key }}"
+      aws_secret_key: "{{ secret_key }}"
+      rules:
+        - proto: tcp
+          ports: 22
+          cidr_ip: 0.0.0.0/0
+          rule_desc: allow all on ssh port
+        - proto: tcp
+          ports: 8080
+          cidr_ip: 0.0.0.0/0
+          rule_desc: allow all on boxfuse port
+
+  - name: launch build instance
     ec2:
-      key_name: ansible
+      key_name: admin
       instance_type: t2.micro
       image: ami-05f7491af5eef733a
       region: eu-central-1
       wait: yes
-      group: launch-wizard-1
+      group: java-app-sg
       count: 1
       vpc_subnet_id: subnet-999223e5
       assign_public_ip: yes
       aws_access_key: "{{ access_key }}"
       aws_secret_key: "{{ secret_key }}"
+      instance_tags:
+        Name: "builder"
+    register: build_host
+
+ - name: launch prod instance
+   ec2:
+    key_name: admin
+    instance_type: t2.micro
+    image: ami-05f7491af5eef733a
+    region: eu-central-1
+    wait: yes
+    group: java-app-sg
+    count: 1
+    vpc_subnet_id: subnet-999223e5
+    assign_public_ip: yes
+    aws_access_key: "{{ access_key }}"
+    aws_secret_key: "{{ secret_key }}"
+    instance_tags:
+      Name: "prod"
+   register: prod_host
+
+
+  - name: Add the newly created EC2 instance to the local builder group
+    become: true
+    local_action: lineinfile
+     path="/etc/ansible/hosts"
+     regexp={{ item.public_ip }}
+     insertafter="[builder]" line="build_host {{ item.public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=/home/admin/.ssh/admin ansible_ssh_extra_args='-o StrictHostKeyChecking=no'"
+    with_items: "{{ build_host.instances }}"
+
+ - name: Add the newly created EC2 instance to the local builder group
+   become: true
+   local_action: lineinfile
+    path="/etc/ansible/hosts"
+    regexp={{ item.public_ip }}
+    insertafter="[prod]" line="build_host {{ item.public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=/home/admin/.ssh/admin ansible_ssh_extra_args='-o StrictHostKeyChecking=no'"
+   with_items: "{{ prod_host.instances }}"
+
+- name: Configure build instance
+  hosts: build_host
+  gather_facts: True
+
+  tasks:
+  - name: Install system packages
+      apt: name={{ item }} state=latest update_cache=yes
+      loop: ['maven', 'git']
+
+    - name: Install add-apt-repostory
+      apt:
+        name: software-properties-common
+        state: latest
+
+    - name: Add Oracle Java Repository
+      apt_repository:
+        repo: ppa:webupd8team/java
+
+    - name: Accept Java 8 License
+      debconf:
+        name: oracle-java8-installer
+        question: shared/accepted-oracle-license-v1-1
+        value: true
+        vtype: select
+
+    - name: Install Oracle Java 8
+      package:
+        name:
+         - openjdk-8-jdk
+         - ca-certificates
+        update_cache: yes
+
+    - name: Clone bitbucket repo
+      git:
+        repo: https://github.com/boxfuse/boxfuse-sample-java-war-hello.git
+        dest: /home/ubuntu/java-app
+        version: master
+        accept_hostkey: yes
+
+    - name: Running mvn build
+      command: "chdir=/home/ubuntu/java-app mvn package"
+
+    - name: Fetch the file from the builder to master
+      run_once: yes
+      fetch: src=/home/ubuntu/java-app/target/hello-1.0.war dest=buffer/ flat=yes
+
+- hosts: prod
+  become: true
+
+  tasks:
+  - name: Copy the file from master to prod
+    copy: src=buffer/hello-1.0.war dest=/home/ubuntu
+
+  - name: Install OpenJDK
+    apt:
+      name: openjdk-11-jre-headless
+
+  - name: download tomcat-9 server packages
+    get_url:
+      url: https://apache.ip-connect.vn.ua/tomcat/tomcat-9/v9.0.46/bin/apache-tomcat-9.0.46.tar.gz
+      dest: /usr/local
+
+  - name: extract tomcat packages
+    unarchive:
+      src: /usr/local/apache-tomcat-9.0.46.tar.gz
+      dest: /usr/local
+      remote_src: yes
+
+  - name: Copy the file from master to prod
+    copy: src=buffer/hello-1.0.war dest=/usr/local/apache-tomcat-9.0.46/webapps
+
+  - name: start tomcat services
+    shell: nohup /usr/local/apache-tomcat-9.0.46/bin/startup.sh
